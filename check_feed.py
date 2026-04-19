@@ -51,11 +51,11 @@ def format_timestamp(date_str):
 
 def send_to_discord(title, link, timestamp):
     payload = {
-        "thread_name": title[:100],  # REQUIRED for forum channels
+        "thread_name": title[:100],
         "embeds": [
             {
                 "title": title,
-                "description": f"{link}\n{timestamp}"
+                "description": f"{timestamp}\n{link}"
             }
         ]
     }
