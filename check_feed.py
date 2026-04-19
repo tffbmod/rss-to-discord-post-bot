@@ -4,7 +4,7 @@ import os
 import requests
 from datetime import datetime, timezone
 
-FEED_URL = "https://www.thefantasyfootballers.com/articles/feed/"
+FEED_URL = "https://www.thefantasyfootballers.com/feed/"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 
 STATE_FILE = "last_seen.json"
