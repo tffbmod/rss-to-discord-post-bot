@@ -52,12 +52,7 @@ def format_timestamp(date_str):
 def send_to_discord(title, link, timestamp):
     payload = {
         "thread_name": title[:100],
-        "embeds": [
-            {
-                "title": title,
-                "description": f"{timestamp}\n{link}"
-            }
-        ]
+        "content": f"{timestamp}\n{link}"
     }
 
     response = requests.post(WEBHOOK_URL, json=payload)
