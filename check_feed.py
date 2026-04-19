@@ -12,6 +12,9 @@ MAX_IDS = 200
 PRUNE_COUNT = 20
 
 
+# ----------------------------
+# STATE MANAGEMENT
+# ----------------------------
 def load_seen():
     if not os.path.exists(STATE_FILE):
         return [], set()
@@ -34,6 +37,9 @@ def prune_seen(seen_list):
     return seen_list
 
 
+# ----------------------------
+# DISCORD FORMATTING
+# ----------------------------
 def format_timestamp(date_str):
     try:
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
@@ -42,16 +48,17 @@ def format_timestamp(date_str):
     except:
         return "Unknown date"
 
+
 def send_to_discord(title, link, timestamp):
-payload = {
-    "thread_name": title,
-    "embeds": [
-        {
-            "title": title,
-            "description": f"{link}\n{timestamp}"
-        }
-    ]
-}
+    payload = {
+        "thread_name": title[:100],  # REQUIRED for forum channels
+        "embeds": [
+            {
+                "title": title,
+                "description": f"{link}\n{timestamp}"
+            }
+        ]
+    }
 
     response = requests.post(WEBHOOK_URL, json=payload)
 
@@ -59,6 +66,9 @@ payload = {
     print("DISCORD RESPONSE:", response.text)
 
 
+# ----------------------------
+# FETCH POSTS
+# ----------------------------
 def fetch_posts():
     try:
         response = requests.get(API_URL, params={"per_page": 10})
@@ -69,12 +79,17 @@ def fetch_posts():
         return []
 
 
+# ----------------------------
+# MAIN LOGIC
+# ----------------------------
 def main():
     if not WEBHOOK_URL:
         print("Missing DISCORD_WEBHOOK environment variable.")
         return
 
     posts = fetch_posts()
+
+    print("Total posts fetched:", len(posts))
 
     if not posts:
         print("No posts found.")
@@ -85,14 +100,18 @@ def main():
 
     for post in posts:
         post_id = str(post.get("id"))
+
+        print("Checking post ID:", post_id)
+
         if post_id not in seen_set:
+            print("NEW POST FOUND:", post.get("title", {}).get("rendered"))
             new_posts.append(post)
 
     if not new_posts:
         print("No new articles.")
         return
 
-    # Oldest → newest
+    # oldest → newest order
     new_posts.reverse()
 
     for post in new_posts:
