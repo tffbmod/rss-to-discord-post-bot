@@ -1,10 +1,9 @@
-import feedparser
 import json
 import os
 import requests
 from datetime import datetime, timezone
 
-FEED_URL = "https://www.thefantasyfootballers.com/feed/"
+API_URL = "https://www.thefantasyfootballers.com/wp-json/wp/v2/posts"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 
 STATE_FILE = "last_seen.json"
@@ -35,20 +34,13 @@ def prune_seen(seen_list):
     return seen_list
 
 
-def format_timestamp(entry):
-    # Prefer published date
-    if hasattr(entry, "published_parsed") and entry.published_parsed:
-        dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-        unix = int(dt.timestamp())
-        return f"<t:{unix}:F>"  # Discord dynamic timestamp
-
-    # Fallback to updated date
-    if hasattr(entry, "updated_parsed") and entry.updated_parsed:
-        dt = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+def format_timestamp(date_str):
+    try:
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         unix = int(dt.timestamp())
         return f"<t:{unix}:F>"
-
-    return "Unknown date"
+    except:
+        return "Unknown date"
 
 
 def send_to_discord(title, link, timestamp):
@@ -64,7 +56,17 @@ def send_to_discord(title, link, timestamp):
     response = requests.post(WEBHOOK_URL, json=payload)
 
     if response.status_code not in (200, 204):
-        print(f"Failed to send to Discord: {response.status_code} {response.text}")
+        print(f"Discord error: {response.status_code} {response.text}")
+
+
+def fetch_posts():
+    try:
+        response = requests.get(API_URL, params={"per_page": 10})
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print("Error fetching posts:", e)
+        return []
 
 
 def main():
@@ -72,42 +74,42 @@ def main():
         print("Missing DISCORD_WEBHOOK environment variable.")
         return
 
-    feed = feedparser.parse(FEED_URL)
+    posts = fetch_posts()
 
-    if not feed.entries:
-        print("No entries found.")
+    if not posts:
+        print("No posts found.")
         return
 
     seen_list, seen_set = load_seen()
-    new_entries = []
+    new_posts = []
 
-    # Find new entries
-    for entry in feed.entries:
-        entry_id = entry.get("id") or entry.get("link")
-        if entry_id and entry_id not in seen_set:
-            new_entries.append(entry)
+    for post in posts:
+        post_id = str(post.get("id"))
+        if post_id not in seen_set:
+            new_posts.append(post)
 
-    if not new_entries:
+    if not new_posts:
         print("No new articles.")
         return
 
-    # Oldest → newest so order is correct in Discord
-    new_entries.reverse()
+    # Oldest → newest
+    new_posts.reverse()
 
-    for entry in new_entries:
-        entry_id = entry.get("id") or entry.get("link")
+    for post in new_posts:
+        post_id = str(post.get("id"))
+        title = post.get("title", {}).get("rendered", "No title")
+        link = post.get("link")
+        date = post.get("date")
 
-        print("Posting:", entry.title)
+        print("Posting:", title)
 
-        timestamp = format_timestamp(entry)
-        send_to_discord(entry.title, entry.link, timestamp)
+        timestamp = format_timestamp(date)
+        send_to_discord(title, link, timestamp)
 
-        seen_list.append(entry_id)
-        seen_set.add(entry_id)
+        seen_list.append(post_id)
+        seen_set.add(post_id)
 
-    # Prune after adding
     seen_list = prune_seen(seen_list)
-
     save_seen(seen_list)
 
 
