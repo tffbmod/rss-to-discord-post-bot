@@ -1,7 +1,7 @@
 import json
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime
 
 API_URL = "https://www.thefantasyfootballers.com/wp-json/wp/v2/posts"
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
@@ -38,17 +38,15 @@ def prune_seen(seen_list):
 
 
 # ----------------------------
-# DISCORD FORMATTING
+# FILTERING
 # ----------------------------
-def format_timestamp(date_str):
-    try:
-        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        unix = int(dt.timestamp())
-        return f"<t:{unix}:F>"
-    except:
-        return "Unknown date"
+def should_post(title):
+    return "podcast" not in title.lower()
 
 
+# ----------------------------
+# DISCORD
+# ----------------------------
 def send_to_discord(title, link, timestamp):
     payload = {
         "thread_name": title[:100],
@@ -75,7 +73,7 @@ def fetch_posts():
 
 
 # ----------------------------
-# MAIN LOGIC
+# MAIN
 # ----------------------------
 def main():
     if not WEBHOOK_URL:
@@ -95,18 +93,21 @@ def main():
 
     for post in posts:
         post_id = str(post.get("id"))
+        title = post.get("title", {}).get("rendered", "")
 
-        print("Checking post ID:", post_id)
+        print("Checking:", title)
 
-        if post_id not in seen_set:
-            print("NEW POST FOUND:", post.get("title", {}).get("rendered"))
+        if post_id not in seen_set and should_post(title):
+            print("ALLOWED:", title)
             new_posts.append(post)
+        else:
+            print("SKIPPED:", title)
 
     if not new_posts:
         print("No new articles.")
         return
 
-    # oldest → newest order
+    # oldest → newest posting order
     new_posts.reverse()
 
     for post in new_posts:
@@ -117,7 +118,13 @@ def main():
 
         print("Posting:", title)
 
-        timestamp = format_timestamp(date)
+        # format timestamp
+        try:
+            dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
+            timestamp = dt.strftime("%Y-%m-%d %H:%M UTC")
+        except:
+            timestamp = "Unknown date"
+
         send_to_discord(title, link, timestamp)
 
         seen_list.append(post_id)
