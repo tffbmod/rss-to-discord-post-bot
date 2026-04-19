@@ -43,14 +43,15 @@ def format_timestamp(date_str):
         return "Unknown date"
 
 def send_to_discord(title, link, timestamp):
-    payload = {
-        "embeds": [
-            {
-                "title": title,
-                "description": f"{link}\n{timestamp}"
-            }
-        ]
-    }
+payload = {
+    "thread_name": title,
+    "embeds": [
+        {
+            "title": title,
+            "description": f"{link}\n{timestamp}"
+        }
+    ]
+}
 
     response = requests.post(WEBHOOK_URL, json=payload)
 
