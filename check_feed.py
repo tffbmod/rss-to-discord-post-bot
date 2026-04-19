@@ -132,7 +132,8 @@ def main():
         # format timestamp
         try:
             dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
-            timestamp = dt.strftime("%Y-%m-%d %H:%M UTC")
+            unix = int(dt.timestamp())
+            timestamp = f"<t:{unix}:F>"
         except:
             timestamp = "Unknown date"
 
