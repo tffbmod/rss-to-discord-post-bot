@@ -42,7 +42,6 @@ def format_timestamp(date_str):
     except:
         return "Unknown date"
 
-
 def send_to_discord(title, link, timestamp):
     payload = {
         "embeds": [
@@ -55,8 +54,8 @@ def send_to_discord(title, link, timestamp):
 
     response = requests.post(WEBHOOK_URL, json=payload)
 
-    if response.status_code not in (200, 204):
-        print(f"Discord error: {response.status_code} {response.text}")
+    print("DISCORD STATUS:", response.status_code)
+    print("DISCORD RESPONSE:", response.text)
 
 
 def fetch_posts():
