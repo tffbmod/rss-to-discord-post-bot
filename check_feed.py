@@ -38,14 +38,24 @@ def prune_seen(seen_list):
 
 
 # ----------------------------
-# FILTERING
+# FILTERING (URL-BASED)
 # ----------------------------
-def should_post(title):
-    return "podcast" not in title.lower()
+def should_post(link):
+    blocked_prefixes = [
+        "https://www.thefantasyfootballers.com/dfs-podcast/",
+        "https://www.thefantasyfootballers.com/episodes/",
+        "https://www.thefantasyfootballers.com/dynasty-podcast/"
+    ]
+
+    for prefix in blocked_prefixes:
+        if link.startswith(prefix):
+            return False
+
+    return True
 
 
 # ----------------------------
-# DISCORD
+# DISCORD POST
 # ----------------------------
 def send_to_discord(title, link, timestamp):
     payload = {
@@ -94,10 +104,11 @@ def main():
     for post in posts:
         post_id = str(post.get("id"))
         title = post.get("title", {}).get("rendered", "")
+        link = post.get("link")
 
         print("Checking:", title)
 
-        if post_id not in seen_set and should_post(title):
+        if post_id not in seen_set and should_post(link):
             print("ALLOWED:", title)
             new_posts.append(post)
         else:
@@ -107,7 +118,7 @@ def main():
         print("No new articles.")
         return
 
-    # oldest → newest posting order
+    # Post oldest → newest
     new_posts.reverse()
 
     for post in new_posts:
