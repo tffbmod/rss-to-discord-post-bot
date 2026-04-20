@@ -2,11 +2,15 @@ name: RSS to Discord
 
 on:
   schedule:
-    - cron: "*/5 * * * *"  # # trigger refresh for schedule
-  workflow_dispatch:       # allows manual trigger
+    - cron: "*/7 * * * *"  # every 7 minutes
+  workflow_dispatch:
 
 permissions:
-  contents: write          # REQUIRED to push changes
+  contents: write
+
+concurrency:
+  group: rss-to-discord
+  cancel-in-progress: true
 
 jobs:
   run-script:
@@ -20,9 +24,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
-        run: pip install feedparser requests
+        run: pip install requests==2.31.0
 
       - name: Run RSS checker
         env:
@@ -34,5 +39,10 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add last_seen.json
-          git commit -m "Update seen articles" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update seen articles"
+            git push
+          fi
