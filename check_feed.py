@@ -24,6 +24,7 @@ TAG_IDS = {
     "dynasty": "1495638845029486682",
     "props": "1495638912159453274",
     "fantasy-reaction": "1495638943998152774",
+    "reaction": "1495638943998152774",  # 👈 optional fallback
     "strategy": "1495638975992565871"
 }
 
