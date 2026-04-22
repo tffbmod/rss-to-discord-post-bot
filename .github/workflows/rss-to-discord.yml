@@ -1,7 +1,6 @@
 name: RSS to Discord
 
 on:
-  schedule:
   workflow_dispatch:
 
 permissions:
