@@ -15,6 +15,13 @@ MAX_IDS = 200
 PRUNE_COUNT = 20
 
 # ----------------------------
+# FAIL FAST IF WEBHOOK MISSING
+# ----------------------------
+if not WEBHOOK_URL:
+    raise ValueError("DISCORD_WEBHOOK is not set")
+
+
+# ----------------------------
 # DISCORD TAG IDS
 # ----------------------------
 TAG_IDS = {
@@ -24,7 +31,7 @@ TAG_IDS = {
     "dynasty": "1495638845029486682",
     "props": "1495638912159453274",
     "fantasy-reaction": "1495638943998152774",
-    "reaction": "1495638943998152774",  # 👈 optional fallback
+    "reaction": "1495638943998152774",  # fallback
     "strategy": "1495638975992565871"
 }
 
@@ -93,7 +100,7 @@ def extract_tag_id(link):
             print(f"Tag detected: {prefix}")
             return [tag_id]
 
-        print(f"⚠️ No matching tag for prefix: {prefix}")
+        print(f"No matching tag for prefix: {prefix}")
         return []
 
     except Exception as e:
@@ -124,7 +131,6 @@ def send_to_discord(title, link, timestamp):
             response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
 
         print("DISCORD STATUS:", response.status_code)
-        print("DISCORD RESPONSE:", response.text)
 
     except Exception as e:
         print("Error sending to Discord:", e)
@@ -147,10 +153,6 @@ def fetch_posts():
 # MAIN
 # ----------------------------
 def main():
-    if not WEBHOOK_URL:
-        print("Missing DISCORD_WEBHOOK environment variable.")
-        return
-
     posts = fetch_posts()
 
     print("Total posts fetched:", len(posts))
