@@ -29,17 +29,20 @@ jobs:
       - name: Run RSS checker
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_ALERT_WEBHOOK: ${{ secrets.DISCORD_ALERT_WEBHOOK }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
         run: python check_feed.py
 
-      - name: Commit and push state file
+      - name: Commit and push state files
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add last_seen.json
+
+          git add last_seen.json failure_state.json
 
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Update seen articles"
+            git commit -m "Update state files"
             git push
           fi
