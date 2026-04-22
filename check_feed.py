@@ -7,18 +7,54 @@ from html import unescape
 from urllib.parse import urlparse
 
 API_URL = "https://www.thefantasyfootballers.com/wp-json/wp/v2/posts"
+
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
+ALERT_WEBHOOK = os.environ.get("DISCORD_ALERT_WEBHOOK")
+DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID")
 
 STATE_FILE = "last_seen.json"
+FAILURE_FILE = "failure_state.json"
 
 MAX_IDS = 200
 PRUNE_COUNT = 20
 
 # ----------------------------
-# FAIL FAST IF WEBHOOK MISSING
+# FAIL FAST
 # ----------------------------
 if not WEBHOOK_URL:
     raise ValueError("DISCORD_WEBHOOK is not set")
+
+# ----------------------------
+# FAILURE TRACKING
+# ----------------------------
+def load_failure():
+    if not os.path.exists(FAILURE_FILE):
+        return 0
+    try:
+        with open(FAILURE_FILE, "r") as f:
+            return json.load(f).get("fail_count", 0)
+    except:
+        return 0
+
+
+def save_failure(count):
+    with open(FAILURE_FILE, "w") as f:
+        json.dump({"fail_count": count}, f)
+
+
+def send_alert(message):
+    if not ALERT_WEBHOOK or not DISCORD_USER_ID:
+        print("Alert webhook or user ID not set.")
+        return
+
+    payload = {
+        "content": f"<@{DISCORD_USER_ID}> 🚨 RSS Bot Error:\n{message}"
+    }
+
+    try:
+        requests.post(ALERT_WEBHOOK, json=payload, timeout=10)
+    except Exception as e:
+        print("Failed to send alert:", e)
 
 
 # ----------------------------
@@ -31,7 +67,7 @@ TAG_IDS = {
     "dynasty": "1495638845029486682",
     "props": "1495638912159453274",
     "fantasy-reaction": "1495638943998152774",
-    "reaction": "1495638943998152774",  # fallback
+    "reaction": "1495638943998152774",
     "strategy": "1495638975992565871"
 }
 
@@ -70,7 +106,7 @@ def prune_seen(seen_list):
 
 
 # ----------------------------
-# FILTERING (URL-BASED)
+# FILTERING
 # ----------------------------
 def should_post(link):
     blocked_prefixes = [
@@ -79,11 +115,7 @@ def should_post(link):
         "https://www.thefantasyfootballers.com/dynasty-podcast/"
     ]
 
-    for prefix in blocked_prefixes:
-        if link.startswith(prefix):
-            return False
-
-    return True
+    return not any(link.startswith(p) for p in blocked_prefixes)
 
 
 # ----------------------------
@@ -93,18 +125,8 @@ def extract_tag_id(link):
     try:
         path = urlparse(link).path.strip("/")
         prefix = path.split("/")[0].lower()
-
-        tag_id = TAG_IDS.get(prefix)
-
-        if tag_id:
-            print(f"Tag detected: {prefix}")
-            return [tag_id]
-
-        print(f"No matching tag for prefix: {prefix}")
-        return []
-
-    except Exception as e:
-        print("Error extracting tag:", e)
+        return [TAG_IDS[prefix]] if prefix in TAG_IDS else []
+    except:
         return []
 
 
@@ -120,95 +142,90 @@ def send_to_discord(title, link, timestamp):
         "applied_tags": tags
     }
 
-    try:
+    response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
+
+    if response.status_code == 429:
+        retry_after = response.json().get("retry_after", 1)
+        print(f"Rate limited. Retrying after {retry_after} seconds...")
+        time.sleep(retry_after)
         response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
 
-        # Handle rate limiting
-        if response.status_code == 429:
-            retry_after = response.json().get("retry_after", 1)
-            print(f"Rate limited. Retrying after {retry_after} seconds...")
-            time.sleep(retry_after)
-            response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
-
-        print("DISCORD STATUS:", response.status_code)
-
-    except Exception as e:
-        print("Error sending to Discord:", e)
+    print("Discord status:", response.status_code)
 
 
 # ----------------------------
 # FETCH POSTS
 # ----------------------------
 def fetch_posts():
-    try:
-        response = requests.get(API_URL, params={"per_page": 10}, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print("Error fetching posts:", e)
-        return []
+    response = requests.get(API_URL, params={"per_page": 5}, timeout=10)
+    response.raise_for_status()
+    return response.json()
 
 
 # ----------------------------
 # MAIN
 # ----------------------------
 def main():
-    posts = fetch_posts()
+    print("---- RUN START ----")
 
-    print("Total posts fetched:", len(posts))
+    fail_count = load_failure()
 
-    if not posts:
-        print("No posts found.")
-        return
+    try:
+        posts = fetch_posts()
+        print("Posts fetched:", len(posts))
 
-    seen_list, seen_set = load_seen()
-    new_posts = []
+        seen_list, seen_set = load_seen()
+        new_posts = []
 
-    for post in posts:
-        post_id = str(post.get("id"))
-        raw_title = post.get("title", {}).get("rendered", "")
-        title = unescape(raw_title)
-        link = post.get("link")
+        for post in posts:
+            post_id = str(post.get("id"))
+            title = unescape(post.get("title", {}).get("rendered", ""))
+            link = post.get("link")
 
-        print("Checking:", title)
+            if post_id not in seen_set and should_post(link):
+                new_posts.append(post)
 
-        if post_id not in seen_set and should_post(link):
-            print("ALLOWED:", title)
-            new_posts.append(post)
-        else:
-            print("SKIPPED:", title)
+        if not new_posts:
+            print("No new posts.")
+            save_failure(0)
+            print("---- RUN END ----")
+            return
 
-    if not new_posts:
-        print("No new articles.")
-        return
+        new_posts.reverse()
 
-    # Post oldest → newest
-    new_posts.reverse()
+        for post in new_posts:
+            post_id = str(post.get("id"))
+            title = unescape(post.get("title", {}).get("rendered", "No title"))
+            link = post.get("link")
+            date = post.get("date")
 
-    for post in new_posts:
-        post_id = str(post.get("id"))
-        raw_title = post.get("title", {}).get("rendered", "No title")
-        title = unescape(raw_title)
-        link = post.get("link")
-        date = post.get("date")
-
-        print("Posting:", title)
-
-        # format timestamp
-        try:
             dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
-            unix = int(dt.timestamp())
-            timestamp = f"<t:{unix}:F>"
-        except:
-            timestamp = "Unknown date"
+            timestamp = f"<t:{int(dt.timestamp())}:F>"
 
-        send_to_discord(title, link, timestamp)
+            print("Posting:", title)
 
-        seen_list.append(post_id)
-        seen_set.add(post_id)
+            send_to_discord(title, link, timestamp)
 
-    seen_list = prune_seen(seen_list)
-    save_seen(seen_list)
+            seen_list.append(post_id)
+            seen_set.add(post_id)
+
+            time.sleep(1)  # rate safety
+
+        seen_list = prune_seen(seen_list)
+        save_seen(seen_list)
+
+        save_failure(0)
+
+    except Exception as e:
+        fail_count += 1
+        save_failure(fail_count)
+
+        error_msg = f"Failure #{fail_count}\n{str(e)}"
+        print(error_msg)
+
+        send_alert(error_msg)
+
+    print("---- RUN END ----")
 
 
 if __name__ == "__main__":
