@@ -24,22 +24,31 @@ PRUNE_COUNT = 20
 if not WEBHOOK_URL:
     raise ValueError("DISCORD_WEBHOOK is not set")
 
+
 # ----------------------------
-# FAILURE TRACKING
+# FAILURE TRACKING (WITH ALERT CONTROL)
 # ----------------------------
-def load_failure():
+def load_failure_state():
     if not os.path.exists(FAILURE_FILE):
-        return 0
+        return {"fail_count": 0, "alert_sent": False}
+
     try:
         with open(FAILURE_FILE, "r") as f:
-            return json.load(f).get("fail_count", 0)
+            data = json.load(f)
+            return {
+                "fail_count": data.get("fail_count", 0),
+                "alert_sent": data.get("alert_sent", False)
+            }
     except:
-        return 0
+        return {"fail_count": 0, "alert_sent": False}
 
 
-def save_failure(count):
+def save_failure_state(fail_count, alert_sent):
     with open(FAILURE_FILE, "w") as f:
-        json.dump({"fail_count": count}, f)
+        json.dump({
+            "fail_count": fail_count,
+            "alert_sent": alert_sent
+        }, f)
 
 
 def send_alert(message):
@@ -48,7 +57,7 @@ def send_alert(message):
         return
 
     payload = {
-        "content": f"<@{DISCORD_USER_ID}> 🚨 RSS Bot Error:\n{message}"
+        "content": f"<@{DISCORD_USER_ID}> 🚨 RSS Bot:\n{message}"
     }
 
     try:
@@ -168,7 +177,9 @@ def fetch_posts():
 def main():
     print("---- RUN START ----")
 
-    fail_count = load_failure()
+    state = load_failure_state()
+    fail_count = state["fail_count"]
+    alert_sent = state["alert_sent"]
 
     try:
         posts = fetch_posts()
@@ -187,7 +198,12 @@ def main():
 
         if not new_posts:
             print("No new posts.")
-            save_failure(0)
+            
+            # If previously failing, notify recovery
+            if fail_count > 0:
+                send_alert("✅ RSS Bot has recovered and is working again.")
+
+            save_failure_state(0, False)
             print("---- RUN END ----")
             return
 
@@ -209,21 +225,28 @@ def main():
             seen_list.append(post_id)
             seen_set.add(post_id)
 
-            time.sleep(1)  # rate safety
+            time.sleep(1)
 
         seen_list = prune_seen(seen_list)
         save_seen(seen_list)
 
-        save_failure(0)
+        # If previously failing, notify recovery
+        if fail_count > 0:
+            send_alert("✅ RSS Bot has recovered and is working again.")
+
+        save_failure_state(0, False)
 
     except Exception as e:
         fail_count += 1
-        save_failure(fail_count)
 
         error_msg = f"Failure #{fail_count}\n{str(e)}"
         print(error_msg)
 
-        send_alert(error_msg)
+        if not alert_sent:
+            send_alert(error_msg)
+            alert_sent = True
+
+        save_failure_state(fail_count, alert_sent)
 
     print("---- RUN END ----")
 
