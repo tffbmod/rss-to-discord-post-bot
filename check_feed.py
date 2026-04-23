@@ -15,8 +15,7 @@ DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID")
 STATE_FILE = "last_seen.json"
 FAILURE_FILE = "failure_state.json"
 
-MAX_IDS = 200
-PRUNE_COUNT = 20
+MAX_IDS = 500
 
 # ----------------------------
 # FAIL FAST
@@ -26,7 +25,7 @@ if not WEBHOOK_URL:
 
 
 # ----------------------------
-# FAILURE TRACKING (WITH ALERT CONTROL)
+# FAILURE TRACKING
 # ----------------------------
 def load_failure_state():
     if not os.path.exists(FAILURE_FILE):
@@ -34,11 +33,7 @@ def load_failure_state():
 
     try:
         with open(FAILURE_FILE, "r") as f:
-            data = json.load(f)
-            return {
-                "fail_count": data.get("fail_count", 0),
-                "alert_sent": data.get("alert_sent", False)
-            }
+            return json.load(f)
     except:
         return {"fail_count": 0, "alert_sent": False}
 
@@ -67,7 +62,52 @@ def send_alert(message):
 
 
 # ----------------------------
-# DISCORD TAG IDS
+# STATE MANAGEMENT
+# ----------------------------
+def load_seen():
+    if not os.path.exists(STATE_FILE):
+        return [], set(), set()
+
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+            seen_ids = data.get("seen_ids", [])
+            seen_urls = data.get("seen_urls", [])
+            return seen_ids, set(seen_ids), set(seen_urls)
+    except:
+        return [], set(), set()
+
+
+def save_seen(seen_ids, seen_urls):
+    tmp_file = STATE_FILE + ".tmp"
+
+    with open(tmp_file, "w") as f:
+        json.dump({
+            "seen_ids": seen_ids,
+            "seen_urls": list(seen_urls)
+        }, f)
+
+    os.replace(tmp_file, STATE_FILE)
+
+
+# ----------------------------
+# FILTERING
+# ----------------------------
+def should_post(link):
+    if not link:
+        return False
+
+    blocked_prefixes = [
+        "https://www.thefantasyfootballers.com/dfs-podcast/",
+        "https://www.thefantasyfootballers.com/episodes/",
+        "https://www.thefantasyfootballers.com/dynasty-podcast/"
+    ]
+
+    return not any(link.startswith(p) for p in blocked_prefixes)
+
+
+# ----------------------------
+# TAG EXTRACTION
 # ----------------------------
 TAG_IDS = {
     "analysis": "1495638590447943861",
@@ -81,55 +121,6 @@ TAG_IDS = {
 }
 
 
-# ----------------------------
-# STATE MANAGEMENT
-# ----------------------------
-def load_seen():
-    if not os.path.exists(STATE_FILE):
-        return [], set()
-
-    try:
-        with open(STATE_FILE, "r") as f:
-            data = json.load(f)
-            seen_list = data.get("seen_ids", [])
-            return seen_list, set(seen_list)
-    except Exception as e:
-        print("Error reading state file:", e)
-        return [], set()
-
-
-def save_seen(seen_list):
-    tmp_file = STATE_FILE + ".tmp"
-
-    with open(tmp_file, "w") as f:
-        json.dump({"seen_ids": seen_list}, f)
-
-    os.replace(tmp_file, STATE_FILE)
-
-
-def prune_seen(seen_list):
-    if len(seen_list) >= MAX_IDS:
-        print(f"Pruning oldest {PRUNE_COUNT} entries...")
-        seen_list = seen_list[PRUNE_COUNT:]
-    return seen_list
-
-
-# ----------------------------
-# FILTERING
-# ----------------------------
-def should_post(link):
-    blocked_prefixes = [
-        "https://www.thefantasyfootballers.com/dfs-podcast/",
-        "https://www.thefantasyfootballers.com/episodes/",
-        "https://www.thefantasyfootballers.com/dynasty-podcast/"
-    ]
-
-    return not any(link.startswith(p) for p in blocked_prefixes)
-
-
-# ----------------------------
-# TAG EXTRACTION
-# ----------------------------
 def extract_tag_id(link):
     try:
         path = urlparse(link).path.strip("/")
@@ -140,7 +131,7 @@ def extract_tag_id(link):
 
 
 # ----------------------------
-# DISCORD POST
+# DISCORD POST (FIXED)
 # ----------------------------
 def send_to_discord(title, link, timestamp):
     tags = extract_tag_id(link)
@@ -151,15 +142,41 @@ def send_to_discord(title, link, timestamp):
         "applied_tags": tags
     }
 
-    response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
+    MAX_RETRIES = 3
+    attempt = 0
 
-    if response.status_code == 429:
-        retry_after = response.json().get("retry_after", 1)
-        print(f"Rate limited. Retrying after {retry_after} seconds...")
-        time.sleep(retry_after)
-        response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
+    while attempt < MAX_RETRIES:
+        attempt += 1
 
-    print("Discord status:", response.status_code)
+        try:
+            response = requests.post(WEBHOOK_URL, json=payload, timeout=10)
+
+            # Rate limit handling
+            if response.status_code == 429:
+                retry_after = float(response.json().get("retry_after", 1))
+                print(f"[Attempt {attempt}] Rate limited. Waiting {retry_after}s...")
+                time.sleep(retry_after)
+                continue
+
+            # Retry on server errors
+            if 500 <= response.status_code < 600:
+                print(f"[Attempt {attempt}] Discord server error {response.status_code}")
+                time.sleep(2)
+                continue
+
+            # Fail immediately on client errors
+            if not response.ok:
+                raise Exception(f"Discord error {response.status_code}: {response.text}")
+
+            print("Discord success:", response.status_code)
+            return True  # SUCCESS
+
+        except requests.exceptions.RequestException as e:
+            print(f"[Attempt {attempt}] Network error:", e)
+            time.sleep(2)
+
+    print("Failed to send after retries.")
+    return False
 
 
 # ----------------------------
@@ -185,21 +202,24 @@ def main():
         posts = fetch_posts()
         print("Posts fetched:", len(posts))
 
-        seen_list, seen_set = load_seen()
+        seen_ids, seen_id_set, seen_url_set = load_seen()
+
         new_posts = []
 
         for post in posts:
             post_id = str(post.get("id"))
-            title = unescape(post.get("title", {}).get("rendered", ""))
             link = post.get("link")
 
-            if post_id not in seen_set and should_post(link):
+            if (
+                post_id not in seen_id_set and
+                link not in seen_url_set and
+                should_post(link)
+            ):
                 new_posts.append(post)
 
         if not new_posts:
             print("No new posts.")
-            
-            # If previously failing, notify recovery
+
             if fail_count > 0:
                 send_alert("✅ RSS Bot has recovered and is working again.")
 
@@ -207,7 +227,10 @@ def main():
             print("---- RUN END ----")
             return
 
-        new_posts.reverse()
+        # Ensure correct order
+        new_posts.sort(key=lambda p: p.get("date", ""))
+
+        updated = False
 
         for post in new_posts:
             post_id = str(post.get("id"))
@@ -215,22 +238,32 @@ def main():
             link = post.get("link")
             date = post.get("date")
 
-            dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
-            timestamp = f"<t:{int(dt.timestamp())}:F>"
+            try:
+                dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
+                timestamp = f"<t:{int(dt.timestamp())}:F>"
+            except:
+                timestamp = "New post"
 
             print("Posting:", title)
 
-            send_to_discord(title, link, timestamp)
+            success = send_to_discord(title, link, timestamp)
 
-            seen_list.append(post_id)
-            seen_set.add(post_id)
+            if success:
+                seen_ids.append(post_id)
+                seen_id_set.add(post_id)
+                seen_url_set.add(link)
+                updated = True
+            else:
+                print("Skipping save, will retry next run.")
 
             time.sleep(1)
 
-        seen_list = prune_seen(seen_list)
-        save_seen(seen_list)
+        if len(seen_ids) > MAX_IDS:
+            seen_ids = seen_ids[-MAX_IDS:]
 
-        # If previously failing, notify recovery
+        if updated:
+            save_seen(seen_ids, seen_url_set)
+
         if fail_count > 0:
             send_alert("✅ RSS Bot has recovered and is working again.")
 
